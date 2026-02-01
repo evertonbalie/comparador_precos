@@ -56,19 +56,42 @@ try {
     $chaveAcesso = "";
     $numeroNota = "000";
 
-    // A. Busca Nome do Local
-    // Pega a primeira linha de texto que não seja cabeçalho padrão
-    $linhasTexto = explode("\n", $textoPagina);
-    foreach ($linhasTexto as $l) {
-        $l = trim($l);
-        // Ignora palavras comuns de cabeçalho do governo
-        if (!empty($l) && strlen($l) > 3 && 
-            stripos($l, 'SECRETARIA') === false && 
-            stripos($l, 'NFC-e') === false &&
-            stripos($l, 'Consulta') === false) {
-            
-            $nomeLocal = $l;
-            break; // Achou o nome, para o loop
+    // A. NOME DO LOCAL (Nova Lógica Baseada na sua Descoberta)
+    $achouNome = false;
+
+    // TENTATIVA 1: Busca direta pelo ID 'u20' (Onde está o Freitas Gomes)
+    if (!$achouNome) {
+        try {
+            $elementoNome = $driver->findElement(WebDriverBy::id('u20'));
+            $nomeLocal = trim($elementoNome->getText());
+            $achouNome = true;
+        } catch (Exception $e) { /* Não achou ID u20, tenta o próximo */ }
+    }
+
+    // TENTATIVA 2: Busca pela classe 'txtTopo' (Comum na SEFA)
+    if (!$achouNome) {
+        try {
+            $elementoNome = $driver->findElement(WebDriverBy::className('txtTopo'));
+            $nomeLocal = trim($elementoNome->getText());
+            $achouNome = true;
+        } catch (Exception $e) { /* Não achou classe txtTopo */ }
+    }
+
+    // TENTATIVA 3: Busca por texto perto do CNPJ (Fallback antigo)
+    if (!$achouNome) {
+        $linhasTexto = explode("\n", $textoPagina);
+        for ($i = 0; $i < count($linhasTexto); $i++) {
+            if (stripos($linhasTexto[$i], 'CNPJ') !== false) {
+                // Pega linha anterior
+                if (isset($linhasTexto[$i - 1])) {
+                    $candidato = trim($linhasTexto[$i - 1]);
+                    if (strlen($candidato) > 2 && stripos($candidato, 'DOCUMENTO') === false) {
+                        $nomeLocal = $candidato;
+                        $achouNome = true;
+                    }
+                }
+                break;
+            }
         }
     }
 
