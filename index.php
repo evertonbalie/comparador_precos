@@ -3,7 +3,7 @@ require_once('banco.php');
 $banco = new Banco();
 
 $termoBusca = $_GET['busca'] ?? null;
-$listaProdutos = $banco->listarTudo(); // Pega os últimos 100 itens gerais
+$listaProdutos = $banco->listarTudo(); 
 $top5 = []; 
 $estatisticas = null;
 
@@ -12,7 +12,7 @@ $labelsGrafico = [];
 $dadosGrafico = [];
 
 if ($termoBusca) {
-    // Se tiver busca, carrega os dados específicos
+    // Carrega estatísticas e Top 5
     $top5 = $banco->buscarTop5($termoBusca);
     $estatisticas = $banco->buscarEstatisticas($termoBusca);
     $historico = $banco->buscarHistoricoGrafico($termoBusca);
@@ -29,7 +29,7 @@ if ($termoBusca) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestor de Preços Inteligente</title>
+    <title>Gestor de Preços</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -42,53 +42,59 @@ if ($termoBusca) {
         button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; transition: 0.2s; }
         button:hover { background: #0056b3; }
         
-        /* Links e Botões de Ação */
-        .link-produto { text-decoration: none; color: #333; font-weight: 500; transition: 0.2s; display: inline-flex; align-items: center; gap: 5px; }
-        .link-produto:hover { color: #007bff; }
-        
-        /* Botões Pequenos (Copiar/Abrir) */
+        /* Botões */
         .btn-acao {
-            border: none;
-            padding: 4px 8px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 0.85em;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            transition: 0.2s;
-            margin-left: 5px;
+            border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.85em;
+            text-decoration: none; display: inline-flex; align-items: center; gap: 4px; transition: 0.2s; margin-left: 5px;
         }
         .btn-sefa { background-color: #e7f1ff; color: #007bff; border: 1px solid #b6d4fe; }
         .btn-sefa:hover { background-color: #007bff; color: white; }
-        
         .btn-copiar { background-color: #f8f9fa; color: #6c757d; border: 1px solid #dee2e6; }
         .btn-copiar:hover { background-color: #6c757d; color: white; }
 
-        /* BOXES DE ANÁLISE */
+        /* BOXES DE ESTATÍSTICA */
         .analise-grid { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 30px; }
-        .box-compra { flex: 1; background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 15px; border-radius: 8px; min-width: 300px; }
-        .box-venda { flex: 1; background: #cff4fc; border: 1px solid #b6effb; color: #055160; padding: 15px; border-radius: 8px; min-width: 300px; }
+        .box-compra { flex: 1; background: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 15px; border-radius: 8px; }
+        .box-venda { flex: 1; background: #cff4fc; border: 1px solid #b6effb; color: #055160; padding: 15px; border-radius: 8px; }
         .titulo-box { font-weight: bold; margin-bottom: 15px; display: block; border-bottom: 1px solid rgba(0,0,0,0.1); padding-bottom: 5px; }
-        .stats-row { display: flex; justify-content: space-between; text-align: center; gap: 10px; }
-        .stats-item { flex: 1; border-right: 1px solid rgba(0,0,0,0.1); }
-        .stats-item:last-child { border-right: none; }
-        .label-pequeno { font-size: 0.8em; text-transform: uppercase; }
+        .stats-row { display: flex; justify-content: space-between; text-align: center; }
         .valor-grande { font-size: 1.3em; font-weight: bold; margin: 5px 0; }
 
-        /* PODIO */
-        .podio-container { display: flex; flex-direction: column; gap: 10px; margin-bottom: 30px; }
-        .card-ouro { background: #d1e7dd; border: 1px solid #badbcc; border-left: 6px solid #198754; padding: 15px; border-radius: 8px; }
-        .preco-destaque { font-size: 1.8em; font-weight: bold; color: #198754; margin: 5px 0; }
-        .card-prata { background: #fff; border: 1px solid #ddd; border-left: 4px solid #6c757d; padding: 10px 15px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
-        .rank-numero { font-weight: bold; color: #666; margin-right: 10px; }
+        /* ================= DESTAQUES (TOP 5) ================= */
+        .podio-container { display: flex; flex-direction: column; gap: 10px; margin-bottom: 30px; border-top: 1px solid #eee; padding-top: 20px; }
+        
+        /* 1º Lugar (Ouro) */
+        .card-ouro { 
+            background: #fff3cd; 
+            border: 2px solid #ffecb5; 
+            border-left: 6px solid #ffc107; 
+            padding: 15px; 
+            border-radius: 8px;
+            color: #664d03;
+        }
+        .card-ouro h3 { margin-top: 0; color: #ffc107; text-shadow: 1px 1px 0px #997404; }
+        .preco-campeao { font-size: 2em; font-weight: bold; color: #198754; margin: 5px 0; }
+
+        /* 2º ao 5º Lugar */
+        .card-lista { 
+            background: #fff; 
+            border: 1px solid #ddd; 
+            border-left: 4px solid #6c757d; 
+            padding: 10px 15px; 
+            border-radius: 6px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+        }
+        .rank-badge { background: #6c757d; color: white; border-radius: 50%; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.8em; margin-right: 8px; }
 
         /* Tabela */
         .table-responsive { overflow-x: auto; margin-top: 20px; border-top: 2px solid #eee; padding-top: 20px; }
         table { width: 100%; border-collapse: collapse; font-size: 14px; }
         th { background-color: #343a40; color: white; padding: 10px; text-align: left; }
-        td { padding: 10px; border-bottom: 1px solid #eee; vertical-align: middle; }
+        td { padding: 10px; border-bottom: 1px solid #eee; }
+        .link-produto { text-decoration: none; color: #333; font-weight: 500; }
+        .link-produto:hover { color: #007bff; }
     </style>
 </head>
 <body>
@@ -98,7 +104,7 @@ if ($termoBusca) {
 
     <div class="search-container">
         <form style="display:flex; width:100%; gap:10px;">
-            <input type="text" name="busca" placeholder="Pesquisar produto (Ex: Arroz, Feijão)..." value="<?= htmlspecialchars($termoBusca) ?>">
+            <input type="text" name="busca" placeholder="Pesquisar produto..." value="<?= htmlspecialchars($termoBusca) ?>">
             <button type="submit">Analisar</button>
             <?php if($termoBusca): ?>
                 <a href="index.php" style="padding: 10px; color: red; text-decoration: none; font-weight:bold; display:flex; align-items:center;">X</a>
@@ -108,114 +114,89 @@ if ($termoBusca) {
 
     <div style="text-align:center; margin-bottom: 20px;">
         <a href="scanner.php" style="background-color: #6f42c1; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-            <i class="fas fa-barcode"></i> Abrir Leitor de Código
+            <i class="fas fa-barcode"></i> Abrir Leitor
         </a>
     </div>
 
     <?php if ($termoBusca && $estatisticas && $estatisticas['minimo']): ?>
         
-        <?php 
-            $custo = $estatisticas['media'];
-            $vendaMinima = $custo * 1.30; 
-            $vendaPadrao = $custo * 1.60; 
-            $vendaPremium = $custo * 2.00;
-        ?>
-
         <div class="analise-grid">
             <div class="box-compra">
-                <span class="titulo-box"><i class="fas fa-shopping-cart"></i> Análise de Compra (Custo)</span>
+                <span class="titulo-box">📊 Análise de Custo</span>
                 <div class="stats-row">
-                    <div class="stats-item">
-                        <div class="label-pequeno">Melhor Preço</div>
-                        <div class="valor-grande" style="color:#198754">R$ <?= number_format($estatisticas['minimo'], 2, ',', '.') ?></div>
-                    </div>
-                    <div class="stats-item">
-                        <div class="label-pequeno">Média</div>
-                        <div class="valor-grande">R$ <?= number_format($estatisticas['media'], 2, ',', '.') ?></div>
-                    </div>
-                    <div class="stats-item">
-                        <div class="label-pequeno">Mais Caro</div>
-                        <div class="valor-grande" style="color:#dc3545">R$ <?= number_format($estatisticas['maximo'], 2, ',', '.') ?></div>
-                    </div>
+                    <div><small>Mínimo</small><div class="valor-grande" style="color:#198754">R$ <?= number_format($estatisticas['minimo'], 2, ',', '.') ?></div></div>
+                    <div><small>Média</small><div class="valor-grande">R$ <?= number_format($estatisticas['media'], 2, ',', '.') ?></div></div>
+                    <div><small>Máximo</small><div class="valor-grande" style="color:#dc3545">R$ <?= number_format($estatisticas['maximo'], 2, ',', '.') ?></div></div>
                 </div>
             </div>
-
             <div class="box-venda">
-                <span class="titulo-box"><i class="fas fa-tags"></i> Sugestão de Venda</span>
+                <span class="titulo-box">💰 Sugestão Venda</span>
                 <div class="stats-row">
-                    <div class="stats-item">
-                        <div class="label-pequeno">Promo (30%)</div>
-                        <div class="valor-grande">R$ <?= number_format($vendaMinima, 2, ',', '.') ?></div>
-                    </div>
-                    <div class="stats-item">
-                        <div class="label-pequeno">Padrão (60%)</div>
-                        <div class="valor-grande" style="font-weight:900; color:#0d6efd">R$ <?= number_format($vendaPadrao, 2, ',', '.') ?></div>
-                    </div>
-                    <div class="stats-item">
-                        <div class="label-pequeno">Premium (100%)</div>
-                        <div class="valor-grande">R$ <?= number_format($vendaPremium, 2, ',', '.') ?></div>
-                    </div>
+                    <div><small>Promo</small><div class="valor-grande">R$ <?= number_format($estatisticas['media'] * 1.3, 2, ',', '.') ?></div></div>
+                    <div><small>Normal</small><div class="valor-grande" style="color:#0d6efd">R$ <?= number_format($estatisticas['media'] * 1.6, 2, ',', '.') ?></div></div>
                 </div>
             </div>
         </div>
 
         <?php if(count($dadosGrafico) > 1): ?>
-            <div style="margin-bottom: 30px; border: 1px solid #ddd; padding: 10px; border-radius: 8px;">
-                <canvas id="meuGrafico" style="max-height: 200px;"></canvas>
+            <div style="margin-bottom: 30px; height: 200px;">
+                <canvas id="meuGrafico"></canvas>
             </div>
         <?php endif; ?>
 
         <?php if (!empty($top5)): ?>
-            <h3 style="color:#555">🏆 Onde comprar mais barato?</h3>
+            <h3 style="color:#555;">🏆 Melhores Preços Encontrados</h3>
             <div class="podio-container">
                 
                 <?php if (isset($top5[0])): ?>
                 <div class="card-ouro">
-                    <h3><i class="fas fa-trophy" style="color: gold;"></i> 1º Lugar - Campeão</h3>
-                    <div class="preco-destaque">R$ <?= number_format($top5[0]['preco'], 2, ',', '.') ?></div>
+                    <h3><i class="fas fa-crown"></i> CAMPEÃO: MELHOR PREÇO</h3>
+                    <div class="preco-campeao">R$ <?= number_format($top5[0]['preco'], 2, ',', '.') ?></div>
+                    <div style="font-size:1.1em; font-weight:bold; margin-bottom:5px;"><?= $top5[0]['produto'] ?></div>
                     
-                    <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 10px;">
-                        <span style="font-size:1.1em; font-weight:bold;"><?= $top5[0]['produto'] ?></span>
-                        
-                        <?php if (!empty($top5[0]['chave'])): ?>
-                            <button onclick="copiarChave('<?= $top5[0]['chave'] ?>')" class="btn-acao btn-copiar" title="Copiar Chave">
+                    <div style="margin-bottom:5px; color:#555;">
+                        <i class="fas fa-map-marker-alt"></i> <?= $top5[0]['local'] ?> 
+                        <span style="font-size:0.8em;">(<?= date('d/m', strtotime($top5[0]['data_importacao'])) ?>)</span>
+                    </div>
+
+                    <?php if (!empty($top5[0]['chave'])): ?>
+                        <div style="margin-top:10px;">
+                            <button onclick="copiarChave('<?= $top5[0]['chave'] ?>')" class="btn-acao btn-copiar">
                                 <i class="far fa-copy"></i> Copiar Chave
                             </button>
                             <a href="https://app.sefa.pa.gov.br/consulta-nfce/#/consulta?chave=<?= $top5[0]['chave'] ?>" target="_blank" class="btn-acao btn-sefa">
-                                <i class="fas fa-external-link-alt"></i> SEFA
+                                <i class="fas fa-external-link-alt"></i> Ver Nota
                             </a>
-                        <?php endif; ?>
-                    </div>
-
-                    <small style="display:block; margin-top:5px;">📍 <?= $top5[0]['local'] ?> em <?= date('d/m/Y', strtotime($top5[0]['data_importacao'])) ?></small>
+                        </div>
+                    <?php endif; ?>
                 </div>
                 <?php endif; ?>
 
                 <?php for($i = 1; $i < count($top5); $i++): ?>
-                <div class="card-prata">
-                    <div>
-                        <span class="rank-numero">#<?= $i + 1 ?></span> 
-                        <span style="font-weight:500"><?= $top5[$i]['produto'] ?></span>
-                        
+                <div class="card-lista">
+                    <div style="flex:1">
+                        <span class="rank-badge"><?= $i + 1 ?></span>
+                        <b><?= $top5[$i]['local'] ?></b> 
+                        <br><small style="color:#666; margin-left:30px;"><?= mb_strimwidth($top5[$i]['produto'], 0, 40, "...") ?></small>
+                    </div>
+                    <div style="text-align:right">
+                        <div style="font-weight:bold; font-size:1.1em; color:#333;">R$ <?= number_format($top5[$i]['preco'], 2, ',', '.') ?></div>
                         <?php if (!empty($top5[$i]['chave'])): ?>
-                            <button onclick="copiarChave('<?= $top5[$i]['chave'] ?>')" class="btn-acao btn-copiar" title="Copiar">
+                            <button onclick="copiarChave('<?= $top5[$i]['chave'] ?>')" class="btn-acao btn-copiar" style="margin-top:5px;">
                                 <i class="far fa-copy"></i>
                             </button>
                         <?php endif; ?>
-
-                        <div style="font-size:0.85em; color:#666; margin-top:2px;"><?= $top5[$i]['local'] ?></div>
                     </div>
-                    <div style="font-weight: bold;">R$ <?= number_format($top5[$i]['preco'], 2, ',', '.') ?></div>
                 </div>
                 <?php endfor; ?>
+
             </div>
         <?php endif; ?>
-
-    <?php elseif($termoBusca): ?>
-        <p style="text-align:center; color:#666; padding: 20px;">Nenhum produto encontrado com este nome.</p>
+        <?php elseif($termoBusca): ?>
+        <p style="text-align:center; padding:20px; color:#666">Nenhum produto encontrado.</p>
     <?php endif; ?>
 
-    <h3>📜 Histórico de Importações</h3>
+    <h3>📜 Histórico Geral</h3>
     <div class="table-responsive">
         <table>
             <thead>
@@ -224,48 +205,26 @@ if ($termoBusca) {
                     <th>Local</th>
                     <th>Produto</th>
                     <th>Valor</th>
-                    <th>Chave / Ações</th>
+                    <th>Ações</th>
                 </tr>
             </thead>
             <tbody>
                 <?php foreach ($listaProdutos as $item): ?>
                 <tr>
                     <td><?= date('d/m/y', strtotime($item['data_importacao'])) ?></td>
-                    
-                    <td style="font-size: 0.9em; color:#555;">
-                        <?= mb_strimwidth($item['local'], 0, 20, "...") ?>
-                    </td>
-
+                    <td style="font-size: 0.9em;"><?= mb_strimwidth($item['local'], 0, 20, "...") ?></td>
                     <td>
-                        <a href="?busca=<?= urlencode($item['produto']) ?>" class="link-produto" title="Analisar este produto">
+                        <a href="?busca=<?= urlencode($item['produto']) ?>" class="link-produto">
                             <?= mb_strimwidth($item['produto'], 0, 30, "...") ?> <i class="fas fa-search" style="font-size:0.8em"></i>
                         </a>
-                        <div style="font-size: 0.8em; color: #888;">Nota: <?= $item['numero_nota'] ?></div>
                     </td>
-
                     <td style="color:#28a745; font-weight:bold;">R$ <?= number_format($item['preco'], 2, ',', '.') ?></td>
-                    
                     <td>
                         <?php if(!empty($item['chave'])): ?>
-                            <div style="display: flex; gap: 5px; align-items: center;">
-                                
-                                <button onclick="copiarChave('<?= $item['chave'] ?>')" class="btn-acao btn-copiar" title="Copiar chave">
-                                    <i class="far fa-copy"></i>
-                                </button>
-
-                                <a href="https://app.sefa.pa.gov.br/consulta-nfce/#/consulta?chave=<?= $item['chave'] ?>" 
-                                   target="_blank" 
-                                   class="btn-acao btn-sefa"
-                                   title="Abrir Nota na SEFA">
-                                    <i class="fas fa-external-link-alt"></i> Abrir
-                                </a>
-
-                            </div>
-                            <small style="color:#aaa; font-size: 0.7em;">
-                                <?= substr($item['chave'], 0, 4) ?>...<?= substr($item['chave'], -4) ?>
-                            </small>
+                            <button onclick="copiarChave('<?= $item['chave'] ?>')" class="btn-acao btn-copiar"><i class="far fa-copy"></i></button>
+                            <a href="https://app.sefa.pa.gov.br/consulta-nfce/#/consulta?chave=<?= $item['chave'] ?>" target="_blank" class="btn-acao btn-sefa"><i class="fas fa-external-link-alt"></i></a>
                         <?php else: ?>
-                            <span style="color:#ccc; font-size:0.8em;">--</span>
+                            <span style="color:#ccc;">--</span>
                         <?php endif; ?>
                     </td>
                 </tr>
@@ -276,54 +235,21 @@ if ($termoBusca) {
 </div>
 
 <script>
-    // 1. Script do Gráfico
     <?php if ($termoBusca && count($dadosGrafico) > 0): ?>
     const ctx = document.getElementById('meuGrafico').getContext('2d');
     new Chart(ctx, {
         type: 'line',
         data: {
             labels: <?= json_encode($labelsGrafico) ?>,
-            datasets: [{
-                label: 'Histórico de Preço',
-                data: <?= json_encode($dadosGrafico) ?>,
-                borderColor: '#007bff',
-                backgroundColor: 'rgba(0, 123, 255, 0.1)',
-                fill: true,
-                tension: 0.3
-            }]
+            datasets: [{ label: 'Preço', data: <?= json_encode($dadosGrafico) ?>, borderColor: '#007bff', backgroundColor: 'rgba(0,123,255,0.1)', fill: true }]
         },
         options: { responsive: true, maintainAspectRatio: false }
     });
     <?php endif; ?>
 
-    // 2. Função Copiar Chave (Compatível com PC e Celular)
     function copiarChave(chave) {
-        if (navigator.clipboard && window.isSecureContext) {
-            // Método Moderno
-            navigator.clipboard.writeText(chave).then(() => {
-                alert('✅ Chave copiada!\n' + chave);
-            }).catch(err => {
-                prompt("Erro no automático. Copie manualmente:", chave);
-            });
-        } else {
-            // Método Antigo (Fallback)
-            let textArea = document.createElement("textarea");
-            textArea.value = chave;
-            textArea.style.position = "fixed";
-            textArea.style.left = "-9999px";
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            try {
-                document.execCommand('copy');
-                alert('✅ Chave copiada!\n' + chave);
-            } catch (err) {
-                prompt("Copie manualmente:", chave);
-            }
-            document.body.removeChild(textArea);
-        }
+        navigator.clipboard.writeText(chave).then(() => { alert('✅ Chave copiada!'); }).catch(err => { prompt("Copie:", chave); });
     }
 </script>
-
 </body>
 </html>
