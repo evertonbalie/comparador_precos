@@ -12,7 +12,6 @@ $labelsGrafico = [];
 $dadosGrafico = [];
 
 if ($termoBusca) {
-    // Carrega estatísticas e Top 5
     $top5 = $banco->buscarTop5($termoBusca);
     $estatisticas = $banco->buscarEstatisticas($termoBusca);
     $historico = $banco->buscarHistoricoGrafico($termoBusca);
@@ -129,11 +128,22 @@ if ($termoBusca) {
                     <div><small>Máximo</small><div class="valor-grande" style="color:#dc3545">R$ <?= number_format($estatisticas['maximo'], 2, ',', '.') ?></div></div>
                 </div>
             </div>
+            
             <div class="box-venda">
                 <span class="titulo-box">💰 Sugestão Venda</span>
                 <div class="stats-row">
-                    <div><small>Promo</small><div class="valor-grande">R$ <?= number_format($estatisticas['media'] * 1.3, 2, ',', '.') ?></div></div>
-                    <div><small>Normal</small><div class="valor-grande" style="color:#0d6efd">R$ <?= number_format($estatisticas['media'] * 1.6, 2, ',', '.') ?></div></div>
+                    <div>
+                        <small>Promo <strong>(30%)</strong></small>
+                        <div class="valor-grande">R$ <?= number_format($estatisticas['media'] * 1.3, 2, ',', '.') ?></div>
+                    </div>
+                    <div>
+                        <small>Padrão <strong>(60%)</strong></small>
+                        <div class="valor-grande" style="color:#0d6efd">R$ <?= number_format($estatisticas['media'] * 1.6, 2, ',', '.') ?></div>
+                    </div>
+                    <div>
+                        <small>Premium <strong>(100%)</strong></small>
+                        <div class="valor-grande">R$ <?= number_format($estatisticas['media'] * 2.0, 2, ',', '.') ?></div>
+                    </div>
                 </div>
             </div>
         </div>
