@@ -10,7 +10,7 @@ use Facebook\WebDriver\Chrome\ChromeOptions;
 use Facebook\WebDriver\WebDriverBy;
 
 // Configuração do Chrome
-$host = 'http://localhost:4444';
+$host = '127.0.0.1:4444';
 $options = new ChromeOptions();
 $options->addArguments(['--start-maximized', '--disable-gpu', '--no-sandbox']);
 $capabilities = DesiredCapabilities::chrome();
@@ -27,9 +27,61 @@ try {
     echo "1. Digite a Chave, resolva o Captcha e clique em Consultar.\n";
     echo "2. ESPERE a nota aparecer completa na tela.\n";
     echo "3. Volte aqui e aperte ENTER.\n";
+ echo "1. Digite a Chave e resolva o Captcha no navegador que abriu.\n";
+    echo "⏳ Aguardando você carregar a nota...\n";
     
-    $handle = fopen ("php://stdin","r");
-    $line = fgets($handle);
+    $notaCarregou = false;
+    $tentativas = 0;
+    $limiteTentativas = 90; // 90 tentativas de 2s = 3 minutos
+    
+    while (!$notaCarregou && $tentativas < $limiteTentativas) {
+        try {
+            // Garante que o Selenium olhe para a página principal antes de buscar
+            $driver->switchTo()->defaultContent();
+            $iframes = $driver->findElements(WebDriverBy::tagName('iframe'));
+            
+            foreach ($iframes as $iframe) {
+                // Entra no iFrame atual para ler o texto lá dentro
+                $driver->switchTo()->frame($iframe);
+                $textoIframe = $driver->findElement(WebDriverBy::tagName('body'))->getText();
+                
+                // Verifica se é realmente a Nota Fiscal buscando palavras-chave comuns
+                if (stripos($textoIframe, 'CNPJ') !== false && stripos($textoIframe, 'Total') !== false) {
+                    $notaCarregou = true;
+                    echo "\n✅ Nota detectada com sucesso! Iniciando leitura...\n";
+                    break; // Achou a nota, para o loop e MANTÉM o foco neste iFrame
+                }
+                
+                // Se era só o Captcha, volta pra página principal e olha o próximo iFrame
+                $driver->switchTo()->defaultContent();
+            }
+        } catch (Exception $e) {
+            // Se o Selenium for bloqueado de ler o iFrame do Captcha, apenas ignora
+            $driver->switchTo()->defaultContent();
+        }
+
+        if (!$notaCarregou) {
+            echo "."; 
+            flush();
+            sleep(2);
+            $tentativas++;
+        }
+    }
+
+    if (!$notaCarregou) {
+        echo "\n🔴 Tempo limite esgotado. Nenhuma nota foi encontrada.\n";
+        $driver->quit();
+        exit;
+    }
+
+    // --- A PARTIR DAQUI VEM O SEU CÓDIGO ORIGINAL DE EXTRAÇÃO ---
+    // (Lembre-se de remover aquele $driver->switchTo()->frame($iframes[0]); antigo, pois o loop acima já deixa o driver dentro da nota corretamente)
+
+    echo "⏳ Analisando a estrutura da página...\n";
+
+    // Pega todo o texto visível da nota para usar Regex
+    $textoPagina = $driver->findElement(WebDriverBy::tagName('body'))->getText();
+    $htmlPagina = $driver->getPageSource();
 
     echo "⏳ Analisando a estrutura da página...\n";
 
@@ -112,10 +164,38 @@ try {
         $numeroNota = $matchesNum[1];
     }
 
+    // D. Busca Data de Emissão
+    $dataEmissaoDB = null; // Fica nulo se não achar
+    // Procura o padrão comum de emissão: "Emissão: 01/05/2026 14:30:00"
+    if (preg_match('/(?:Emissão|Data de Emissão)[:\s]*(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}:\d{2})/iu', $textoPagina, $matchesData)) {
+        $dataExtraida = $matchesData[1];
+        // Converte do padrão Brasileiro (d/m/Y H:i:s) para o padrão de Banco de Dados (Y-m-d H:i:s)
+        $dataEmissaoDB = date('Y-m-d H:i:s', strtotime(str_replace('/', '-', $dataExtraida)));
+        
+    }
+
+ // E: CAPTURA DA QUANTIDADE ---
+            $quantidade = 1; // Começa com 1 como padrão de segurança
+            
+            // Busca por variações de quantidade (Qtd, Qtde, Quantidade)
+            if (preg_match('/(?:Qtde?|Quantidade|Qtd)\.?[:\s]*([\d.,]+)/iu', $textoCompleto, $matchesQtd)) {
+                $qtdTexto = $matchesQtd[1]; // Ex: "2,000" ou "1.5"
+                
+                // Limpeza: remove pontos de milhar e troca vírgula por ponto decimal
+                $qtdTexto = str_replace('.', '', $qtdTexto);
+                $qtdTexto = str_replace(',', '.', $qtdTexto);
+                
+                // Converte para número (float, pois pode ser 1.5 KG)
+                $quantidade = floatval($qtdTexto);
+            }
+            // ------------------------------------------
+
     echo "\n📊 DADOS EXTRAÍDOS DO CABEÇALHO:\n";
     echo "🏢 Local: $nomeLocal\n";
     echo "🔑 Chave: $chaveAcesso\n";
     echo "📄 Nota:  $numeroNota\n";
+    echo "Quantidade: $quantidade\n";
+    echo "📅 Emissão: " . ($dataEmissaoDB ?? 'Não encontrada') . "\n";
     echo "---------------------------------\n";
 
     // ---------------------------------------------------------
@@ -176,19 +256,37 @@ try {
                 $unidade = $matchesUnid[1];
             }
 
-            // Validação e Salvamento
-            if($preco > 0 && !empty($nome)) {
-                // Insere no banco passando a Chave e Nota que pegamos lá em cima
-                $inseriu = $banco->inserir($nome, $preco, $unidade, $chaveAcesso, $numeroNota, $nomeLocal);
-                
-                if ($inseriu) {
-                    echo "✅ $nome | R$ $preco\n";
-                    $contador++;
-                } else {
-                    echo "⚠️ $nome (Duplicado/Ignorado)\n";
-                }
+            // --- CAPTURA DA QUANTIDADE (ESTRITA) ---
+            $quantidade = null; // Começa nulo. Se não achar, vai barrar a inserção.
+            
+            if (preg_match('/(?:Qtde?|Quantidade|Qtd)\.?[:\s]*([\d.,]+)/iu', $textoCompleto, $matchesQtd)) {
+                $qtdTexto = $matchesQtd[1]; 
+                $qtdTexto = str_replace('.', '', $qtdTexto); // Remove ponto de milhar
+                $qtdTexto = str_replace(',', '.', $qtdTexto); // Troca vírgula por ponto
+                $quantidade = floatval($qtdTexto);
             }
 
+            // --- VALIDAÇÃO E SALVAMENTO ---
+            // 1. Verifica se achou Nome e Preço
+            if (empty($nome) || $preco <= 0) {
+                continue; // Pula linhas vazias ou sem preço
+            }
+
+            // 2. A TRAVA DE ESTOQUE QUE VOCÊ PEDIU
+            if ($quantidade === null || $quantidade <= 0) {
+                echo "🛑 DIVERGÊNCIA: Quantidade não encontrada para o produto '$nome'. Item ignorado!\n";
+                continue; // Interrompe este item e vai para o próximo da lista
+            }
+
+            // 3. Se passou por todas as travas, insere no banco
+            $inseriu = $banco->inserir($nome, $preco, $unidade, $chaveAcesso, $numeroNota, $nomeLocal,$quantidade, $dataEmissaoDB);
+            
+            if ($inseriu) {
+                echo "✅ $nome | Qtd: $quantidade | R$ $preco\n";
+                $contador++;
+            } else {
+                echo "⚠️ $nome (Duplicado - Chave e Qtd já existem)\n";
+            }
         } catch (Exception $e) {
             // Erro em uma linha específica não para o script
             echo "Erro ao ler linha: " . $e->getMessage() . "\n";

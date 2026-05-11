@@ -23,26 +23,37 @@ class Banco {
         $this->pdo->exec($sql);
     }
 
-    public function inserir($produto, $preco, $unidade, $chave, $numero, $local) {
+   public function inserir($produto, $preco, $unidade, $chave, $numero, $local,$quantidade,$dataEmissao) {
+        // 1. Força o fuso horário correto do Brasil
+        date_default_timezone_set('America/Sao_Paulo');
+        
+        // 2. Captura a data e hora exata do momento da execução
+        $dataImportacaoLocal = date('Y-m-d H:i:s');
+
         // Evita duplicar o mesmo produto da mesma nota
         $check = $this->pdo->prepare("SELECT id FROM compras WHERE produto = :prod AND chave = :chave");
         $check->execute([':prod' => $produto, ':chave' => $chave]);
         
         if (!$check->fetch()) {
-            $stmt = $this->pdo->prepare("INSERT INTO compras (produto, preco, unidade, chave, numero_nota, local) VALUES (:prod, :preco, :unid, :chave, :num, :local)");
+            // 3. Adicionamos a coluna data_importacao manualmente aqui no INSERT
+            $stmt = $this->pdo->prepare("INSERT INTO compras (produto, preco, unidade, chave, numero_nota, local,data_importacao, quantidade,data_emissao) 
+                                         VALUES (:prod, :preco, :unid, :chave, :num, :local,:importacao,:quantidade, :emissao)");
             $stmt->execute([
-                ':prod' => $produto, 
-                ':preco' => $preco, 
-                ':unid' => $unidade,
-                ':chave' => $chave,
-                ':num' => $numero,
-                ':local' => $local
+                ':prod'      => $produto, 
+                ':preco'     => $preco, 
+                ':unid'      => $unidade,
+                ':chave'     => $chave,
+                ':num'       => $numero,
+                ':local'     => $local,
+                ':importacao'=> $dataImportacaoLocal, // 4. Envia a variável que criamos
+                ':quantidade' =>$quantidade,
+                ':emissao'   => $dataEmissao
+                
             ]);
             return true;
         }
         return false;
     }
-
 /*     public function buscarMelhorPreco($termo) {
         $stmt = $this->pdo->prepare("SELECT * FROM compras WHERE produto LIKE :termo ORDER BY preco ASC LIMIT 1");
         $stmt->execute([':termo' => "%$termo%"]);
@@ -60,7 +71,7 @@ class Banco {
 
         // --- ATUALIZADO: Busca os 5 melhores preços ---
 public function buscarTop5($termo) {
-        $stmt = $this->pdo->prepare("SELECT * FROM compras WHERE produto LIKE :termo ORDER BY preco ASC LIMIT 5");
+        $stmt = $this->pdo->prepare("SELECT * FROM compras WHERE produto LIKE :termo ORDER BY preco ASC LIMIT 10");
         // Forma mais segura de concatenar o %
         $stmt->execute([':termo' => "%" . $termo . "%"]); 
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -84,7 +95,7 @@ public function buscarTop5($termo) {
     }
 
     public function listarTudo() {
-        $sql = "SELECT * FROM compras ORDER BY data_importacao DESC LIMIT 100";
+        $sql = "SELECT * FROM compras ORDER BY data_emissao DESC LIMIT 100";
         return $this->pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
     }
 
