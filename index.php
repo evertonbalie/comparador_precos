@@ -3,9 +3,27 @@ require_once('banco.php');
 $banco = new Banco();
 
 $termoBusca = $_GET['busca'] ?? null;
-$listaProdutos = $banco->listarTudo();
+$sort = $_GET['sort'] ?? 'data_emissao';
+$dir = $_GET['dir'] ?? 'DESC';
+$listaProdutos = $banco->listarTudo($sort, $dir);
 $top5 = [];
 $estatisticas = null;
+
+function buildSortLink($column, $currentSort, $currentDir, $termoBusca)
+{
+    $newDir = ($currentSort === $column && $currentDir === 'ASC') ? 'DESC' : 'ASC';
+    $url = "?sort=$column&dir=$newDir";
+    if ($termoBusca) {
+        $url .= "&busca=" . urlencode($termoBusca);
+    }
+    $icon = "";
+    if ($currentSort === $column) {
+        $icon = $currentDir === 'ASC' ? ' <i class="fas fa-sort-up"></i>' : ' <i class="fas fa-sort-down"></i>';
+    } else {
+        $icon = ' <i class="fas fa-sort" style="color:#ccc;"></i>';
+    }
+    return ['url' => $url, 'icon' => $icon];
+}
 
 // Variáveis do Gráfico
 $labelsGrafico = [];
@@ -586,11 +604,23 @@ if ($termoBusca) {
             <table>
                 <thead>
                     <tr>
-                       
-                        <th style="width: 120px; text-align: center;">Data Emissão</th>
-                        <th>Local</th>
-                        <th>Produto</th>
-                        <th>Valor</th>
+                        <?php
+                        $linkEmissao = buildSortLink('data_emissao', $sort, $dir, $termoBusca);
+                        $linkLocal = buildSortLink('local', $sort, $dir, $termoBusca);
+                        $linkProduto = buildSortLink('produto', $sort, $dir, $termoBusca);
+                        $linkPreco = buildSortLink('preco', $sort, $dir, $termoBusca);
+                        ?>
+                        <th style="width: 120px; text-align: center;"><a href="<?= $linkEmissao['url'] ?>"
+                                style="color:white; text-decoration:none;">Data Emissão <?= $linkEmissao['icon'] ?></a>
+                        </th>
+                        <th><a href="<?= $linkLocal['url'] ?>" style="color:white; text-decoration:none;">Local
+                                <?= $linkLocal['icon'] ?></a></th>
+                        <th><a href="<?= $linkProduto['url'] ?>" style="color:white; text-decoration:none;">Produto
+                                <?= $linkProduto['icon'] ?></a></th>
+                        <th><a href="<?= $linkPreco['url'] ?>" style="color:white; text-decoration:none;">Valor
+                                Compra<?= $linkPreco['icon'] ?></a></th>
+                        <th><a href="<?= $linkPreco['url'] ?>" style="color:white; text-decoration:none;">Valor
+                                Venda<?= $linkPreco['icon'] ?></a></th>
                         <th>Ações</th>
                     </tr>
                 </thead>
@@ -609,6 +639,9 @@ if ($termoBusca) {
                             <td style="color:#28a747; font-weight:bold;">R$
                                 <?= number_format($item['preco'], 2, ',', '.') ?>
                             </td>
+                            <td style="color:#28a747; font-weight:bold;">R$
+                                <?= number_format($item['preco_venda'], 2, ',', '.') ?>
+                            </td>
                             <td>
                                 <?php if (!empty($item['chave'])): ?>
                                     <button onclick="copiarChave('<?= $item['chave'] ?>')" class="btn-acao btn-copiar"><i
@@ -620,12 +653,12 @@ if ($termoBusca) {
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <button onclick="abrirEstoque('<?= htmlspecialchars(addslashes($item['produto'])) ?>')"
+                                <!--  <button onclick="abrirEstoque('<?= htmlspecialchars(addslashes($item['produto'])) ?>')"
                                     class="btn-acao"
                                     style="background-color: #17a2b8; color: white; border: 1px solid #117a8b;"
                                     title="Gerenciar Estoque">
                                     <i class="fas fa-box"></i>
-                                </button>
+                                </button> -->
 
                                 <?php if (!empty($item['chave'])): ?>
                                     <!-- <button onclick="copiarChave('<?= $item['chave'] ?>')" class="btn-acao btn-copiar"><i

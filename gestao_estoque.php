@@ -43,8 +43,9 @@ try {
     $pdo->exec("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('telegram_token', '')");
     $pdo->exec("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('telegram_chat_id', '')");
 
-    $pdo->exec("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('telegram_horarios', '08:00')");
-    $pdo->exec("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('telegram_historico', '{\"data\":\"\",\"enviados\":[]}')");
+    $pdo->exec("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('telegram_modo', 'agendado')");
+    $pdo->exec("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('telegram_intervalo', '60')"); // Em minutos
+    $pdo->exec("INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('telegram_ultimo_envio', '0')"); // Timestamp
 
     try {
         $pdo->exec("INSERT OR IGNORE INTO estoque_lotes (nome_produto, validade, quantidade)
@@ -81,16 +82,15 @@ function processarEnvioTelegram($pdo, $config)
 {
     $botToken = $config['telegram_token'] ?? '';
     $chatId = $config['telegram_chat_id'] ?? '';
-    $horarios_str = $config['telegram_horarios'] ?? '';
     $diasAlerta = intval($config['alerta_dias'] ?? 30);
+    $modo = $config['telegram_modo'] ?? 'agendado';
 
-    if (empty($botToken) || empty($chatId) || empty($horarios_str)) {
-        return ['status' => 'ignorado', 'msg' => 'Faltam configurações do Telegram ou Horários.'];
+    if (empty($botToken) || empty($chatId)) {
+        return ['status' => 'ignorado', 'msg' => 'Faltam configurações do Telegram.'];
     }
 
-    $horarios = array_filter(array_map('trim', explode(',', $horarios_str)));
+    $horarioParaDisparar = null;
     $historico = json_decode($config['telegram_historico'] ?? '{"data":"","enviados":[]}', true);
-
     $hoje = date('Y-m-d');
     $agora = date('H:i');
 
@@ -98,11 +98,27 @@ function processarEnvioTelegram($pdo, $config)
         $historico = ['data' => $hoje, 'enviados' => []];
     }
 
-    $horarioParaDisparar = null;
-    foreach ($horarios as $h) {
-        if ($agora >= $h && !in_array($h, $historico['enviados'])) {
-            $horarioParaDisparar = $h;
-            break;
+    // Lógica 1: Se for por Horários Agendados
+    if ($modo === 'agendado') {
+        $horarios_str = $config['telegram_horarios'] ?? '';
+        $horarios = array_filter(array_map('trim', explode(',', $horarios_str)));
+
+        foreach ($horarios as $h) {
+            if ($agora >= $h && !in_array($h, $historico['enviados'])) {
+                $horarioParaDisparar = $h;
+                break;
+            }
+        }
+    }
+    // Lógica 2: Se for por Intervalo de Tempo (Minutos)
+    else if ($modo === 'intervalo') {
+        $intervaloMinutos = intval($config['telegram_intervalo'] ?? 60);
+        $ultimoEnvioTs = intval($config['telegram_ultimo_envio'] ?? 0);
+        $agoraTs = time();
+
+        // Verifica se a diferença entre agora e o último envio é maior que o intervalo escolhido
+        if (($agoraTs - $ultimoEnvioTs) >= ($intervaloMinutos * 60)) {
+            $horarioParaDisparar = $agora; // Usa a hora atual para avisar que disparou
         }
     }
 
@@ -132,13 +148,18 @@ function processarEnvioTelegram($pdo, $config)
             curl_close($ch);
         }
 
-        $historico['enviados'][] = $horarioParaDisparar;
-        $pdo->prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'telegram_historico'")->execute([json_encode($historico)]);
+        // Atualiza os registros do banco de dados dependendo do modo
+        if ($modo === 'agendado') {
+            $historico['enviados'][] = $horarioParaDisparar;
+            $pdo->prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'telegram_historico'")->execute([json_encode($historico)]);
+        } else {
+            $pdo->prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'telegram_ultimo_envio'")->execute([time()]);
+        }
 
         return ['status' => 'enviado', 'horario' => $horarioParaDisparar];
     }
 
-    return ['status' => 'aguardando_horario', 'msg' => 'Nenhum horário pendente no momento.'];
+    return ['status' => 'aguardando', 'msg' => 'Aguardando o próximo ciclo.'];
 }
 
 if (isset($_GET['cron']) || php_sapi_name() === 'cli') {
@@ -208,8 +229,53 @@ if (isset($_GET['ajax'])) {
     if ($acao === 'vincular_codigo') {
         $nome = $_POST['nome_produto'] ?? '';
         $codigo = $_POST['codigo'] ?? '';
-        $stmt = $pdo->prepare("UPDATE estoque_produtos SET codigo_barras = ? WHERE nome_produto = ?");
-        echo json_encode(['status' => $stmt->execute([$codigo, $nome]) ? 'sucesso' : 'erro']);
+
+        $sucesso = $pdo->prepare("UPDATE estoque_produtos SET codigo_barras = ? WHERE nome_produto = ?")->execute([$codigo, $nome]);
+
+        try {
+            $pdo->prepare("UPDATE compras SET codigo_barras = ? WHERE produto = ?")->execute([$codigo, $nome]);
+        } catch (Exception $e) {
+        }
+
+        echo json_encode(['status' => $sucesso ? 'sucesso' : 'erro']);
+        exit;
+    }
+
+    if ($acao === 'gravar_scan_remoto') {
+        $codigo = $_POST['codigo'] ?? '';
+        if ($codigo) {
+            file_put_contents('codigo_remoto.txt', $codigo);
+            echo json_encode(['status' => 'sucesso']);
+        } else {
+            echo json_encode(['status' => 'erro']);
+        }
+        exit;
+    }
+
+    if ($acao === 'ler_scan_remoto') {
+        if (file_exists('codigo_remoto.txt')) {
+            $codigo = trim(file_get_contents('codigo_remoto.txt'));
+            if (!empty($codigo)) {
+                unlink('codigo_remoto.txt');
+                echo json_encode(['status' => 'sucesso', 'codigo' => $codigo]);
+                exit;
+            }
+        }
+        echo json_encode(['status' => 'vazio']);
+        exit;
+    }
+
+    if ($acao === 'salvar_codigo_barras') {
+        $nome = $_POST['nome_produto'] ?? '';
+        $codigo = $_POST['codigo'] ?? '';
+
+        $sucesso = $pdo->prepare("UPDATE estoque_produtos SET codigo_barras = ? WHERE nome_produto = ?")->execute([$codigo, $nome]);
+        try {
+            $pdo->prepare("UPDATE compras SET codigo_barras = ? WHERE produto = ?")->execute([$codigo, $nome]);
+        } catch (Exception $e) {
+        }
+
+        echo json_encode(['status' => $sucesso ? 'sucesso' : 'erro', 'msg' => 'Código de barras salvo com sucesso!']);
         exit;
     }
 
@@ -218,6 +284,11 @@ if (isset($_GET['ajax'])) {
         $pdo->prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'telegram_token'")->execute([$_POST['telegram_token'] ?? '']);
         $pdo->prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'telegram_chat_id'")->execute([$_POST['telegram_chat_id'] ?? '']);
         $pdo->prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'telegram_horarios'")->execute([$_POST['telegram_horarios'] ?? '']);
+
+        // NOVAS LINHAS AQUI:
+        $pdo->prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'telegram_modo'")->execute([$_POST['telegram_modo'] ?? 'agendado']);
+        $pdo->prepare("UPDATE configuracoes SET valor = ? WHERE chave = 'telegram_intervalo'")->execute([intval($_POST['telegram_intervalo'] ?? 60)]);
+
         echo json_encode(['status' => 'sucesso']);
         exit;
     }
@@ -228,14 +299,19 @@ if (isset($_GET['ajax'])) {
         $qtd_movimento = intval($_POST['quantidade'] ?? 0);
         $operacao = $_POST['operacao'] ?? 'ajuste';
         $validade = !empty($_POST['validade']) ? $_POST['validade'] : '';
+        $codigo_barras = $_POST['codigo_barras'] ?? '';
 
         $pdo->prepare("UPDATE estoque_produtos SET preco_venda = ? WHERE nome_produto = ?")->execute([$preco, $nome]);
 
-        if ($operacao === 'entrada' || $operacao === 'ajuste') {
-            if (empty($validade)) {
-                echo json_encode(['status' => 'erro', 'msg' => 'Para Entrada/Ajuste de estoque, é obrigatório informar a Validade do Lote!']);
-                exit;
+        if (!empty($codigo_barras)) {
+            $pdo->prepare("UPDATE estoque_produtos SET codigo_barras = ? WHERE nome_produto = ?")->execute([$codigo_barras, $nome]);
+            try {
+                $pdo->prepare("UPDATE compras SET codigo_barras = ? WHERE produto = ?")->execute([$codigo_barras, $nome]);
+            } catch (Exception $e) {
             }
+        }
+
+        if ($operacao === 'entrada' || $operacao === 'ajuste') {
 
             $stmtCheck = $pdo->prepare("SELECT id FROM estoque_lotes WHERE nome_produto = ? AND validade = ?");
             $stmtCheck->execute([$nome, $validade]);
@@ -532,9 +608,14 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
     <div class="container">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
             <h2 style="margin:0;"><i class="fas fa-layer-group"></i> Lotes e Validades</h2>
-            <a href="index.php"
-                style="padding: 8px 15px; background: #6c757d; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;"><i
-                    class="fas fa-arrow-left"></i> Voltar</a>
+            <div>
+                <a href="relatorio_produtos.php" target="_blank"
+                    style="padding: 8px 15px; background: #dc3545; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-right: 10px;"><i
+                        class="fas fa-file-pdf"></i> Imprimir Relatório</a>
+                <a href="index.php"
+                    style="padding: 8px 15px; background: #6c757d; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;"><i
+                        class="fas fa-arrow-left"></i> Voltar</a>
+            </div>
         </div>
 
         <div class="dashboard-validades">
@@ -553,53 +634,55 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
         </div>
 
         <details style="background: #e9ecef; padding: 15px; border-radius: 8px; margin-bottom: 20px; cursor: pointer;">
-            <summary style="font-weight: bold; color: #333;"><i class="fas fa-cog"></i> Configurar Telegram e Prazos
-            </summary>
+    <summary style="font-weight: bold; color: #333;"><i class="fas fa-cog"></i> Configurar Telegram e Prazos
+    </summary>
 
-            <div
-                style="margin-top: 15px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; cursor: default;">
-                <div><label>Antecedência (Dias)</label><input type="number" id="cfgDias"
-                        value="<?= htmlspecialchars($config['alerta_dias'] ?? '30') ?>"></div>
-                <div><label>Bot Token</label><input type="text" id="cfgToken"
-                        value="<?= htmlspecialchars($config['telegram_token'] ?? '') ?>"></div>
-                <div><label>Seu Chat ID</label><input type="text" id="cfgChat"
-                        value="<?= htmlspecialchars($config['telegram_chat_id'] ?? '') ?>"></div>
+    <div style="margin-top: 15px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; cursor: default;">
+        <div><label>Antecedência (Dias)</label><input type="number" id="cfgDias" value="<?= htmlspecialchars($config['alerta_dias'] ?? '30') ?>"></div>
+        <div><label>Bot Token</label><input type="text" id="cfgToken" value="<?= htmlspecialchars($config['telegram_token'] ?? '') ?>"></div>
+        <div><label>Seu Chat ID</label><input type="text" id="cfgChat" value="<?= htmlspecialchars($config['telegram_chat_id'] ?? '') ?>"></div>
+        
+        <div style="grid-column: span 3; display: grid; grid-template-columns: 1fr 2fr; gap: 15px; align-items: start;">
+            <div style="background: #fff; padding: 15px; border-radius: 5px; border: 1px solid #ddd;">
+                <label style="font-weight:bold; color:#333; display:block; margin-bottom:10px;"><i class="fas fa-sliders-h"></i> Modo de Envio</label>
+                <select id="cfgModo" onchange="alternarModoEnvio()" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; margin-bottom: 15px;">
+                    <option value="agendado" <?= ($config['telegram_modo'] ?? 'agendado') == 'agendado' ? 'selected' : '' ?>>⌚ Horários Específicos</option>
+                    <option value="intervalo" <?= ($config['telegram_modo'] ?? '') == 'intervalo' ? 'selected' : '' ?>>⏳ A cada X Tempo</option>
+                </select>
 
-                <div
-                    style="grid-column: span 3; background: #fff; padding: 15px; border-radius: 5px; border: 1px solid #ddd;">
-                    <label style="font-weight:bold; color:#333; display:block; margin-bottom:10px;"><i
-                            class="fas fa-clock"></i> Horários Agendados (Disparos Diários)</label>
-                    <div style="display: flex; gap: 10px; margin-bottom: 10px;">
-                        <input type="time" id="novoHorario"
-                            style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: auto; font-size: 16px;">
-                        <button onclick="adicionarHorario()" type="button"
-                            style="padding: 8px 15px; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;"><i
-                                class="fas fa-plus"></i> Adicionar Hora</button>
-                    </div>
-                    <div id="listaHorarios"
-                        style="display:flex; flex-wrap: wrap; gap: 8px; min-height: 32px; align-items: center; padding: 10px; background: #f8f9fa; border-radius: 4px; border: 1px dashed #ccc;">
-                    </div>
-                    <input type="hidden" id="cfgHorarios"
-                        value="<?= htmlspecialchars($config['telegram_horarios'] ?? '08:00') ?>">
-                </div>
-
-                <div
-                    style="grid-column: span 3; text-align: right; display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
-                    <button onclick="testarTelegram(this)"
-                        style="padding: 10px 20px; background: #17a2b8; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;"><i
-                            class="fas fa-paper-plane"></i> Testar Envio Agora</button>
-                    <button onclick="salvarConfiguracoes()"
-                        style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;"><i
-                            class="fas fa-save"></i> Salvar Tudo</button>
+                <div id="painelIntervalo" style="display: <?= ($config['telegram_modo'] ?? '') == 'intervalo' ? 'block' : 'none' ?>;">
+                    <label>A cada quantos minutos?</label>
+                    <input type="number" id="cfgIntervalo" value="<?= htmlspecialchars($config['telegram_intervalo'] ?? '60') ?>" min="1" style="width:100%; padding:10px; border:1px solid #ccc; border-radius:4px;">
+                    <small style="color: #666;">Ex: 10 = Dez minutos, 120 = Duas Horas</small>
                 </div>
             </div>
-        </details>
+
+            <div id="painelHorarios" style="background: #fff; padding: 15px; border-radius: 5px; border: 1px solid #ddd; display: <?= ($config['telegram_modo'] ?? 'agendado') == 'agendado' ? 'block' : 'none' ?>;">
+                <label style="font-weight:bold; color:#333; display:block; margin-bottom:10px;"><i class="fas fa-clock"></i> Horários Agendados (Disparos Diários)</label>
+                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                    <input type="time" id="novoHorario" style="padding: 8px; border: 1px solid #ccc; border-radius: 4px; width: auto; font-size: 16px;">
+                    <button onclick="adicionarHorario()" type="button" style="padding: 8px 15px; background: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer;"><i class="fas fa-plus"></i> Adicionar Hora</button>
+                </div>
+                <div id="listaHorarios" style="display:flex; flex-wrap: wrap; gap: 8px; min-height: 32px; align-items: center; padding: 10px; background: #f8f9fa; border-radius: 4px; border: 1px dashed #ccc;">
+                </div>
+                <input type="hidden" id="cfgHorarios" value="<?= htmlspecialchars($config['telegram_horarios'] ?? '08:00') ?>">
+            </div>
+        </div>
+
+        <div style="grid-column: span 3; text-align: right; display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+            <button onclick="testarTelegram(this)" style="padding: 10px 20px; background: #17a2b8; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;"><i class="fas fa-paper-plane"></i> Testar Envio Agora</button>
+            <button onclick="salvarConfiguracoes()" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer;"><i class="fas fa-save"></i> Salvar Tudo</button>
+        </div>
+    </div>
+</details>
 
         <div class="layout-grid">
             <div class="box">
                 <h3><i class="fas fa-barcode"></i> Buscar / Escanear</h3>
-                <button class="btn-scan" id="btnStartScan" onclick="iniciarScanner()"><i class="fas fa-camera"></i>
-                    Câmera</button>
+                <div style="display:flex; gap:10px; margin-bottom: 15px;">
+                    <button class="btn-scan" id="btnStartScan" onclick="iniciarScanner()" style="margin-bottom:0;"><i class="fas fa-camera"></i> Câmera</button>
+                    <a href="scan_celular.php" target="_blank" style="flex:1; padding: 15px; background: #28a745; color: white; text-decoration: none; border-radius: 5px; text-align: center; font-weight: bold; font-size: 1.1em;"><i class="fas fa-mobile-alt"></i> Celular</a>
+                </div>
                 <div id="reader"></div>
                 <div style="margin-top: 15px; display:flex; gap:10px;">
                     <input type="text" id="codigoManual" placeholder="EAN ou Código"
@@ -618,9 +701,9 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
                         <?php
                         $nomesDistintos = $pdo->query("SELECT nome_produto FROM estoque_produtos ORDER BY nome_produto")->fetchAll();
                         foreach ($nomesDistintos as $p): ?>
-                            <option value="<?= htmlspecialchars($p['nome_produto']) ?>">
-                                <?= htmlspecialchars($p['nome_produto']) ?>
-                            </option>
+                                <option value="<?= htmlspecialchars($p['nome_produto']) ?>">
+                                    <?= htmlspecialchars($p['nome_produto']) ?>
+                                </option>
                         <?php endforeach; ?>
                     </select>
                     <button onclick="vincularCodigo()"
@@ -635,11 +718,21 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
                         style="background:#e9ecef; font-weight:bold; width:100%; padding:10px; border:none; outline:none;">
                 </div>
 
+                <div class="form-group">
+                    <label>Código de Barras</label>
+                    <div style="display:flex; gap:10px;">
+                        <input type="text" id="prodCodigoBarras" placeholder="Escanear ou digitar EAN" style="border: 2px solid #007bff; flex:1;">
+                        <button onclick="salvarApenasCodigo()" style="background:#007bff; color:white; border:none; padding:10px; border-radius:5px; cursor:pointer;" title="Salvar apenas o código"><i class="fas fa-save"></i></button>
+                    </div>
+                </div>
+                </div>
+
                 <div class="layout-grid" style="margin-top:0; gap:10px; grid-template-columns: 1fr 1fr;">
                     <div class="form-group"><label>Preço Venda</label><input type="number" id="prodPreco" step="0.01">
                     </div>
                     <div class="form-group"><label>Validade do Lote</label><input type="date" id="prodValidade"
-                            style="border: 2px solid #e67e22;"></div>
+                            style="border: 2px solid #e67e22;">
+                    </div>
                 </div>
 
                 <div class="layout-grid" style="margin-top:0; gap:10px; grid-template-columns: 1fr 1fr;">
@@ -665,7 +758,7 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
         </div>
 
         <div style="margin-top: 40px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #ddd;">
-            <input type="text" id="filtroNome" class="search-bar" onkeyup="filtrarTabela()"
+            <input type="text" id="filtroNome" class="search-bar" onkeyup="salvarEFiltrar()"
                 placeholder="🔍 Pesquisar produto...">
             <div style="overflow-x: auto;">
                 <table id="tabelaEstoque">
@@ -684,7 +777,9 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
                         $produtoAnterior = "";
                         foreach ($produtosEstoque as $p):
                             $badgeVal = "<span class='badge' style='background: #ccc; color:#333'>Sem Lotes</span>";
-                            if (!empty($p['validade'])) {
+                            if ($p['qtd_lote'] !== null && empty($p['validade'])) {
+                                $badgeVal = "<span class='badge' style='background: #718096; color:white'>Sem Validade</span>";
+                            } elseif (!empty($p['validade'])) {
                                 $dias = floor((strtotime($p['validade']) - $hoje_timestamp) / 86400);
                                 $dataBr = date('d/m/Y', strtotime($p['validade']));
                                 if ($dias < 0)
@@ -704,25 +799,26 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
 
                             $qtdLoteShow = $p['qtd_lote'] !== null ? $p['qtd_lote'] : '-';
                             ?>
-                            <tr style="<?= $isNovoProduto ? 'border-top: 3px solid #ccc;' : '' ?>">
-                                <td class="td-nome"
-                                    style="font-weight: 500; color: <?= $isNovoProduto ? '#000' : '#888' ?>;">
-                                    <?= $isNovoProduto ? htmlspecialchars($p['nome_produto']) : '↳ <i>Outro Lote</i>' ?>
-                                </td>
-                                <td><?= $badgeVal ?></td>
-                                <td style="font-weight:bold; color:#007bff;"><?= $qtdLoteShow ?></td>
-                                <td><?= $isNovoProduto ? "<b style='font-size:1.1em;'>" . $p['estoque_total'] . "</b>" : "" ?>
-                                </td>
-                                <td><?= $isNovoProduto ? "R$ " . number_format($p['preco_venda'], 2, ',', '.') : "" ?></td>
-                                <td style="text-align:center;">
-                                    <button class="btn-selecionar" onclick="selecionarParaLote(
+                                <tr style="<?= $isNovoProduto ? 'border-top: 3px solid #ccc;' : '' ?>">
+                                    <td class="td-nome"
+                                        style="font-weight: 500; color: <?= $isNovoProduto ? '#000' : '#888' ?>;">
+                                        <?= $isNovoProduto ? htmlspecialchars($p['nome_produto']) : '↳ <i>Outro Lote</i>' ?>
+                                    </td>
+                                    <td><?= $badgeVal ?></td>
+                                    <td style="font-weight:bold; color:#007bff;"><?= $qtdLoteShow ?></td>
+                                    <td><?= $isNovoProduto ? "<b style='font-size:1.1em;'>" . $p['estoque_total'] . "</b>" : "" ?>
+                                    </td>
+                                    <td><?= $isNovoProduto ? "R$ " . number_format($p['preco_venda'], 2, ',', '.') : "" ?></td>
+                                    <td style="text-align:center;">
+                                        <button class="btn-selecionar" onclick="selecionarParaLote(
                                 '<?= addslashes($p['nome_produto']) ?>', 
                                 '<?= $p['preco_venda'] ?>', 
                                 '<?= $p['validade'] ?>', 
-                                '<?= $p['estoque_total'] ?>'
+                                '<?= $p['estoque_total'] ?>',
+                                '<?= addslashes($p['codigo_barras'] ?? '') ?>'
                             )"><i class="fas fa-edit"></i></button>
-                                </td>
-                            </tr>
+                                    </td>
+                                </tr>
                         <?php endforeach; ?>
                     </tbody>
                 </table>
@@ -789,17 +885,39 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
             fetch('gestao_estoque.php?ajax=1&acao=auto_telegram').catch(e => console.error(e));
         });
 
-        function salvarConfiguracoes() {
-            const fd = new FormData();
-            fd.append('alerta_dias', document.getElementById('cfgDias').value);
-            fd.append('telegram_token', document.getElementById('cfgToken').value);
-            fd.append('telegram_chat_id', document.getElementById('cfgChat').value);
-            fd.append('telegram_horarios', document.getElementById('cfgHorarios').value);
+       // NOVA FUNÇÃO para trocar o que aparece na tela
+function alternarModoEnvio() {
+    var modo = document.getElementById('cfgModo').value;
+    if (modo === 'agendado') {
+        document.getElementById('painelHorarios').style.display = 'block';
+        document.getElementById('painelIntervalo').style.display = 'none';
+    } else {
+        document.getElementById('painelHorarios').style.display = 'none';
+        document.getElementById('painelIntervalo').style.display = 'block';
+    }
+}
 
-            fetch('gestao_estoque.php?ajax=1&acao=salvar_config', { method: 'POST', body: fd })
-                .then(r => r.json())
-                .then(d => { if (d.status === 'sucesso') { alert('Configurações salvas!'); location.reload(); } });
-        }
+// ATUALIZE sua função salvarConfiguracoes por esta:
+function salvarConfiguracoes() {
+    const fd = new FormData();
+    fd.append('alerta_dias', document.getElementById('cfgDias').value);
+    fd.append('telegram_token', document.getElementById('cfgToken').value);
+    fd.append('telegram_chat_id', document.getElementById('cfgChat').value);
+    fd.append('telegram_horarios', document.getElementById('cfgHorarios').value);
+    
+    // Novas variáveis
+    fd.append('telegram_modo', document.getElementById('cfgModo').value);
+    fd.append('telegram_intervalo', document.getElementById('cfgIntervalo').value);
+
+    fetch('gestao_estoque.php?ajax=1&acao=salvar_config', { method: 'POST', body: fd })
+        .then(r => r.json())
+        .then(d => { 
+            if (d.status === 'sucesso') { 
+                alert('Configurações salvas!'); 
+                location.reload(); 
+            } 
+        });
+}
 
         function filtrarTabela() {
             let filter = document.getElementById("filtroNome").value.toUpperCase();
@@ -824,7 +942,7 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
             }
         }
 
-        function selecionarParaLote(nome, preco, validade, estoque_total) {
+        function selecionarParaLote(nome, preco, validade, estoque_total, codigo_barras) {
             window.scrollTo({ top: 0, behavior: 'smooth' });
             document.getElementById('boxAcoes').style.opacity = '1';
             document.getElementById('boxAcoes').style.pointerEvents = 'auto';
@@ -833,6 +951,7 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
             document.getElementById('prodEstoque').value = estoque_total;
             document.getElementById('prodValidade').value = validade || '';
             document.getElementById('prodQtdMovimento').value = 1;
+            document.getElementById('prodCodigoBarras').value = codigo_barras || '';
         }
 
         function movimentarEstoque(operacao) {
@@ -844,6 +963,7 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
             fd.append('preco_venda', document.getElementById('prodPreco').value);
             fd.append('quantidade', document.getElementById('prodQtdMovimento').value);
             fd.append('validade', document.getElementById('prodValidade').value);
+            fd.append('codigo_barras', document.getElementById('prodCodigoBarras').value);
             fd.append('operacao', operacao);
 
             fetch('gestao_estoque.php?ajax=1&acao=movimentar', { method: 'POST', body: fd })
@@ -853,6 +973,25 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
                         alert(data.msg);
                         window.location.reload();
                     } else alert(data.msg);
+                });
+        }
+
+        function salvarApenasCodigo() {
+            const nome = document.getElementById('prodNome').value;
+            const codigo = document.getElementById('prodCodigoBarras').value;
+            if (!nome) return;
+
+            const fd = new FormData();
+            fd.append('nome_produto', nome);
+            fd.append('codigo', codigo);
+
+            fetch('gestao_estoque.php?ajax=1&acao=salvar_codigo_barras', { method: 'POST', body: fd })
+                .then(res => res.json())
+                .then(data => {
+                    alert(data.msg);
+                    if (data.status === 'sucesso') {
+                        window.location.reload();
+                    }
                 });
         }
 
@@ -942,6 +1081,64 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
                     alert('❌ Erro inesperado na requisição.');
                 });
         }
+
+        setInterval(function() {
+        // Gera um número único baseado no tempo atual para evitar que o navegador use o Cache
+        let antiCache = new Date().getTime();
+        
+        fetch('gestao_estoque.php?ajax=1&acao=auto_telegram&_=' + antiCache)
+            .then(res => res.json())
+            .then(data => {
+                if(data.status === 'enviado') {
+                    console.log("Notificação automática enviada às: " + data.horario);
+                }
+            })
+            .catch(e => console.error(e));
+        }, 60000);
+
+        setInterval(function() {
+            let antiCache = new Date().getTime();
+            fetch('gestao_estoque.php?ajax=1&acao=ler_scan_remoto&_=' + antiCache)
+                .then(res => res.json())
+                .then(data => {
+                    if(data.status === 'sucesso' && data.codigo) {
+                        document.getElementById('beepSound').play();
+                        processarCodigo(data.codigo);
+                    }
+                })
+                .catch(e => {});
+        }, 1500);
+
+       
+    // 1. Função que salva o texto digitado e depois chama a sua função original
+    function salvarEFiltrar() {
+        // Pega o valor do input
+        const valorDigitado = document.getElementById('filtroNome').value;
+        
+        // Salva o valor na memória do navegador
+        localStorage.setItem('filtroProdutoMemoria', valorDigitado);
+        
+        // Chama a sua função original que filtra a tabela
+        filtrarTabela(); 
+    }
+
+    // 2. Quando a página carregar, verifica se tem algo salvo
+    window.addEventListener('DOMContentLoaded', (event) => {
+        const inputFiltro = document.getElementById('filtroNome');
+        const valorSalvo = localStorage.getItem('filtroProdutoMemoria');
+
+        // Se existir um valor salvo, coloca ele de volta no input
+        if (valorSalvo) {
+            inputFiltro.value = valorSalvo;
+            
+            // Opcional: Já chama a função para a tabela iniciar filtrada
+            filtrarTabela(); 
+        }
+    });
+
+    // Sua função original permanece a mesma (exemplo):
+    // function filtrarTabela() { ... }
+
     </script>
 </body>
 
