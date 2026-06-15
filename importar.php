@@ -9,8 +9,55 @@ use Facebook\WebDriver\Remote\DesiredCapabilities;
 use Facebook\WebDriver\Chrome\ChromeOptions;
 use Facebook\WebDriver\WebDriverBy;
 
-// Configuração do Chrome
+// Configuração do Chrome e Inicialização Automática do ChromeDriver
 $host = '127.0.0.1:4444';
+$port = 4444;
+$chromeDriverProcess = null;
+
+// Verifica se já existe um serviço ouvindo na porta 4444
+$connection = @fsockopen('127.0.0.1', $port, $errno, $errstr, 1);
+if (!is_resource($connection)) {
+    echo "🔵 ChromeDriver não detectado na porta $port. Inicializando automaticamente...\n";
+    
+    $chromedriverPath = __DIR__ . DIRECTORY_SEPARATOR . 'chromedriver.exe';
+    
+    if (!file_exists($chromedriverPath)) {
+        echo "⚠️ Arquivo chromedriver.exe não encontrado em: $chromedriverPath\n";
+    } else {
+        // Redireciona stdin, stdout e stderr para NUL no Windows para evitar bloqueio por buffer cheio
+        $descriptorspec = [
+            0 => ['file', 'NUL', 'r'],
+            1 => ['file', 'NUL', 'w'],
+            2 => ['file', 'NUL', 'w']
+        ];
+        
+        $cmd = '"' . $chromedriverPath . '" --port=' . $port . ' --allowed-ips=';
+        
+        // bypass_shell garante compatibilidade com aspas no Windows
+        $chromeDriverProcess = proc_open($cmd, $descriptorspec, $pipes, null, null, ['bypass_shell' => true]);
+        
+        if (is_resource($chromeDriverProcess)) {
+            echo "⏳ Aguardando inicialização do ChromeDriver...\n";
+            // Aguarda 1.5 segundos para o ChromeDriver inicializar
+            usleep(1500000);
+            
+            // Registra função para desligar o processo no encerramento do script
+            register_shutdown_function(function() use ($chromeDriverProcess) {
+                if (is_resource($chromeDriverProcess)) {
+                    echo "\n🔴 Encerrando instância automática do ChromeDriver...\n";
+                    proc_terminate($chromeDriverProcess);
+                    proc_close($chromeDriverProcess);
+                }
+            });
+        } else {
+            echo "❌ Falha ao iniciar o processo do ChromeDriver.\n";
+        }
+    }
+} else {
+    fclose($connection);
+    echo "🟢 ChromeDriver já está ativo na porta $port. Conectando à instância existente...\n";
+}
+
 $options = new ChromeOptions();
 $options->addArguments(['--start-maximized', '--disable-gpu', '--no-sandbox']);
 $capabilities = DesiredCapabilities::chrome();
