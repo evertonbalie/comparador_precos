@@ -363,11 +363,22 @@ if (isset($_GET['ajax'])) {
 }
 
 $produtosEstoque = $pdo->query("
-    SELECT p.nome_produto, p.codigo_barras, p.preco_venda, 
+   /*  SELECT p.nome_produto, p.codigo_barras, p.preco_venda, 
            l.validade, l.quantidade as qtd_lote,
            COALESCE((SELECT SUM(quantidade) FROM estoque_lotes WHERE nome_produto = p.nome_produto), 0) as estoque_total
     FROM estoque_produtos p
     LEFT JOIN estoque_lotes l ON p.nome_produto = l.nome_produto AND l.quantidade > 0
+    ORDER BY p.nome_produto ASC, l.validade ASC */
+
+         SELECT p.nome_produto,
+		   p.codigo_barras,
+		   p.preco_venda, 
+           l.validade, l.quantidade as qtd_lote,
+		   c.preco,
+           COALESCE((SELECT SUM(quantidade) FROM estoque_lotes WHERE nome_produto = p.nome_produto), 0) as estoque_total
+    FROM estoque_produtos p
+    LEFT JOIN estoque_lotes l ON p.nome_produto = l.nome_produto AND l.quantidade > 0
+	LEFT JOIN compras c on p.nome_produto=c.produto and l.nome_produto=c.produto and p.nome_produto=l.nome_produto
     ORDER BY p.nome_produto ASC, l.validade ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -765,10 +776,13 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
                     <thead>
                         <tr>
                             <th>Produto</th>
+                             <th>Código de Barras</th>
                             <th>Validade do Lote</th>
                             <th>Qtd. Lote</th>
                             <th>Qtd. Total</th>
                             <th>Preço</th>
+                            <th>Preço Venda</th>
+                           
                             <th style="text-align:center;">Ação</th>
                         </tr>
                     </thead>
@@ -804,21 +818,32 @@ while ($l = $stmtLotesDash->fetch(PDO::FETCH_ASSOC)) {
                                         style="font-weight: 500; color: <?= $isNovoProduto ? '#000' : '#888' ?>;">
                                         <?= $isNovoProduto ? htmlspecialchars($p['nome_produto']) : '↳ <i>Outro Lote</i>' ?>
                                     </td>
+                                    <td><?=$p['codigo_barras']?></td>
                                     <td><?= $badgeVal ?></td>
+                                    
                                     <td style="font-weight:bold; color:#007bff;"><?= $qtdLoteShow ?></td>
                                     <td><?= $isNovoProduto ? "<b style='font-size:1.1em;'>" . $p['estoque_total'] . "</b>" : "" ?>
                                     </td>
+                                    <td><?=$p['preco']?></td>
                                     <td><?= $isNovoProduto ? "R$ " . number_format($p['preco_venda'], 2, ',', '.') : "" ?></td>
                                     <td style="text-align:center;">
                                         <button class="btn-selecionar" onclick="selecionarParaLote(
-                                '<?= addslashes($p['nome_produto']) ?>', 
-                                '<?= $p['preco_venda'] ?>', 
-                                '<?= $p['validade'] ?>', 
-                                '<?= $p['estoque_total'] ?>',
-                                '<?= addslashes($p['codigo_barras'] ?? '') ?>'
-                            )"><i class="fas fa-edit"></i></button>
+                                            '<?= addslashes($p['nome_produto']) ?>',                                             
+                                            '<?= $p['preco_venda'] ?>', 
+                                            '<?= $p['validade'] ?>', 
+                                            '<?= $p['estoque_total'] ?>',
+                                            '<?= addslashes($p['codigo_barras'] ?? '') ?>'
+                                          )"><i class="fas fa-edit"></i>
+                                        </button>
                                     </td>
                                 </tr>
+                          <!--<th>Produto</th>
+                             <th>Código de Barras</th>
+                            <th>Validade do Lote</th>
+                            <th>Qtd. Lote</th>
+                            <th>Qtd. Total</th>
+                            <th>Preço</th>
+                            <th>Preço Venda</th> -->
                         <?php endforeach; ?>
                     </tbody>
                 </table>
